@@ -13,12 +13,13 @@ class WorkerProcess(QThread):
     finished = pyqtSignal(str) 
     error = pyqtSignal(str)
     
-    def __init__(self, url, folder, format_choice, embed_metadata):
+    def __init__(self, url, folder, format_choice, embed_metadata, is_playlist):
         super().__init__()
         self.url = url
         self.folder = folder
         self.format_choice = format_choice
-        self.embed_metadata = embed_metadata # Nova variável que recebe se a caixa está marcada
+        self.embed_metadata = embed_metadata
+        self.is_playlist = is_playlist # Nova variável para saber se é playlist
 
     def progress_hook(self, d):
         if d['status'] == 'downloading':
@@ -28,13 +29,19 @@ class WorkerProcess(QThread):
                 percent = int((downloaded / total) * 100)
                 self.progress.emit(percent)
         elif d['status'] == 'finished':
-            # Como o ffmpeg processa a capa e o áudio depois do download, deixamos em 99% 
-            # até que tudo realmente termine.
             self.progress.emit(99)
 
     def run(self):
         try:
-            out_path = os.path.join(self.folder, '%(title)s.%(ext)s')
+            # Inteligência de Playlist para organizar o iPod
+            if self.is_playlist:
+                # Se for álbum/playlist, coloca o número da faixa na frente: "01 - Nome.mp3"
+                out_path = os.path.join(self.folder, '%(playlist_index)02d - %(title)s.%(ext)s')
+                noplaylist_flag = False
+            else:
+                # Se for música única, só o nome. Ignora playlists ocultas no link do YT Music.
+                out_path = os.path.join(self.folder, '%(title)s.%(ext)s')
+                noplaylist_flag = True
             
             opts = {
                 'outtmpl': out_path,
@@ -42,25 +49,23 @@ class WorkerProcess(QThread):
                 'progress_hooks': [self.progress_hook],
                 'quiet': True,
                 'noprogress': True,
-                'postprocessors': [] # Inicializamos a lista vazia para adicionar coisas depois
+                'noplaylist': noplaylist_flag, # A trava de segurança!
+                'postprocessors': [] 
             }
 
             # 1. Configuração de Vídeo ou Áudio
             if self.format_choice == "windows":
                 opts['format'] = 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'
                 opts['merge_output_format'] = 'mp4'
-                
             elif self.format_choice == "max":
                 opts['format'] = 'bestvideo+bestaudio/best'
                 opts['merge_output_format'] = 'mkv'
-                
             elif self.format_choice == "audio_flac":
                 opts['format'] = 'bestaudio/best'
                 opts['postprocessors'].append({
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'flac',
                 })
-                
             elif self.format_choice == "audio_mp3":
                 opts['format'] = 'bestaudio/best'
                 opts['postprocessors'].append({
@@ -69,14 +74,10 @@ class WorkerProcess(QThread):
                     'preferredquality': '320',
                 })
 
-            # 2. Configuração de Metadados (A Mágica da Capinha)
+            # 2. Configuração de Metadados
             if self.embed_metadata:
-                opts['writethumbnail'] = True # Manda baixar a capa
-                
-                # Injeta as informações de texto (Artista, Álbum, etc)
+                opts['writethumbnail'] = True
                 opts['postprocessors'].append({'key': 'FFmpegMetadata'})
-                
-                # Injeta a imagem da capa dentro do arquivo (O iPod ama isso)
                 opts['postprocessors'].append({
                     'key': 'EmbedThumbnail',
                     'already_have_thumbnail': False,
@@ -86,7 +87,7 @@ class WorkerProcess(QThread):
                 ydl.download([self.url])
                 
             self.progress.emit(100)
-            self.finished.emit("Download concluído! A mídia já está pronta para o seu iPod.")
+            self.finished.emit("Processo concluído! Os arquivos estão na pasta escolhida.")
         except Exception as e:
             self.error.emit(str(e))
 
@@ -99,7 +100,7 @@ class AppDownloadEducacional(QWidget):
         
     def initUI(self):
         self.setWindowTitle("Baixador Mídia (iPod Edition)")
-        self.setFixedSize(520, 520) # Aumentei um pouquinho para caber a nova caixa
+        self.setFixedSize(520, 560) # Aumentei um pouco mais para a nova opção
         
         layout = QVBoxLayout()
         layout.setSpacing(15)
@@ -121,7 +122,7 @@ class AppDownloadEducacional(QWidget):
         layout.addLayout(top_layout)
         
         # --- Entradas ---
-        self.label_url = QLabel("URL do Vídeo (YouTube):")
+        self.label_url = QLabel("URL do Vídeo ou Música (YouTube / YT Music):")
         self.label_url.setStyleSheet("font-weight: 600; font-size: 13px;")
         
         self.input_url = QLineEdit()
@@ -155,7 +156,7 @@ class AppDownloadEducacional(QWidget):
         tipo_layout = QHBoxLayout()
         self.radio_video = QRadioButton("Vídeo (MP4/MKV)")
         self.radio_audio = QRadioButton("Somente Áudio")
-        self.radio_video.setChecked(True)
+        self.radio_audio.setChecked(True) # Mudei o padrão para áudio já que o foco é o iPod!
         
         self.grupo_tipo = QButtonGroup()
         self.grupo_tipo.addButton(self.radio_video)
@@ -174,11 +175,16 @@ class AppDownloadEducacional(QWidget):
         self.atualizar_opcoes_formato()
         layout.addWidget(self.combo_format)
         
-        # --- NOVIDADE: Checkbox de Metadados ---
+        # --- NOVIDADES: Checkboxes Extras ---
         self.check_metadata = QCheckBox("Embutir Capa e Metadados (Ideal para iPod)")
-        self.check_metadata.setChecked(True) # Já deixamos marcado por padrão pra você!
+        self.check_metadata.setChecked(True) 
         self.check_metadata.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.check_metadata)
+
+        self.check_playlist = QCheckBox("Baixar Álbum/Playlist inteira (Numera as faixas)")
+        self.check_playlist.setChecked(False) # Padrão desligado para evitar baixar 100 músicas sem querer
+        self.check_playlist.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(self.check_playlist)
         
         # --- Progresso ---
         self.progress_bar = QProgressBar()
@@ -206,52 +212,38 @@ class AppDownloadEducacional(QWidget):
             self.btn_theme.setText("☀️ Modo Claro")
             style = """
                 QWidget { background-color: #1C1C1E; color: #F2F2F7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-                
                 QLineEdit, QComboBox { background-color: #2C2C2E; border: 1px solid #3A3A3C; border-radius: 8px; padding: 8px 12px; color: #FFFFFF; font-size: 13px; }
                 QLineEdit:focus, QComboBox:focus { border: 2px solid #0A84FF; }
-                
                 QComboBox::drop-down { border: none; }
                 QComboBox QAbstractItemView { background-color: #2C2C2E; color: #FFFFFF; selection-background-color: #0A84FF; border-radius: 8px; outline: none; }
-                
                 QPushButton#btn_download { background-color: #0A84FF; color: white; font-weight: bold; font-size: 15px; border-radius: 10px; border: none; }
                 QPushButton#btn_download:hover { background-color: #0070E0; }
                 QPushButton#btn_download:disabled { background-color: #3A3A3C; color: #8E8E93; }
-                
                 QPushButton#btn_browse { background-color: #3A3A3C; color: white; border-radius: 8px; padding: 0 15px; border: none; font-weight: 600; }
                 QPushButton#btn_browse:hover { background-color: #48484A; }
-                
                 QPushButton#btn_theme { background-color: transparent; border: 1px solid #3A3A3C; color: #F2F2F7; border-radius: 15px; padding: 5px 15px; font-weight: 600; }
                 QPushButton#btn_theme:hover { background-color: #2C2C2E; }
-                
                 QProgressBar { border: none; background-color: #2C2C2E; border-radius: 10px; text-align: center; color: white; font-weight: bold;}
                 QProgressBar::chunk { background-color: #34C759; border-radius: 10px; }
-                
                 QRadioButton, QCheckBox { font-weight: 600; font-size: 13px; }
             """
         else:
             self.btn_theme.setText("🌙 Modo Escuro")
             style = """
                 QWidget { background-color: #F2F2F7; color: #1C1C1E; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-                
                 QLineEdit, QComboBox { background-color: #FFFFFF; border: 1px solid #D1D1D6; border-radius: 8px; padding: 8px 12px; color: #000000; font-size: 13px; }
                 QLineEdit:focus, QComboBox:focus { border: 2px solid #007AFF; }
-                
                 QComboBox::drop-down { border: none; }
                 QComboBox QAbstractItemView { background-color: #FFFFFF; color: #000000; selection-background-color: #007AFF; border-radius: 8px; outline: none; }
-                
                 QPushButton#btn_download { background-color: #007AFF; color: white; font-weight: bold; font-size: 15px; border-radius: 10px; border: none; }
                 QPushButton#btn_download:hover { background-color: #005BB5; }
                 QPushButton#btn_download:disabled { background-color: #D1D1D6; color: #8E8E93; }
-                
                 QPushButton#btn_browse { background-color: #E5E5EA; color: black; border-radius: 8px; padding: 0 15px; border: none; font-weight: 600; }
                 QPushButton#btn_browse:hover { background-color: #D1D1D6; }
-                
                 QPushButton#btn_theme { background-color: transparent; border: 1px solid #D1D1D6; color: #1C1C1E; border-radius: 15px; padding: 5px 15px; font-weight: 600; }
                 QPushButton#btn_theme:hover { background-color: #E5E5EA; }
-                
                 QProgressBar { border: none; background-color: #E5E5EA; border-radius: 10px; text-align: center; color: black; font-weight: bold;}
                 QProgressBar::chunk { background-color: #34C759; border-radius: 10px; }
-                
                 QRadioButton, QCheckBox { font-weight: 600; font-size: 13px; }
             """
         self.setStyleSheet(style)
@@ -274,29 +266,28 @@ class AppDownloadEducacional(QWidget):
         url = self.input_url.text().strip()
         folder = self.input_folder.text().strip()
         format_choice = self.combo_format.currentData()
-        
-        # Pega o estado da caixinha (True ou False)
         embed_metadata = self.check_metadata.isChecked()
+        is_playlist = self.check_playlist.isChecked()
         
         if not url:
-            QMessageBox.warning(self, "Aviso", "Por favor, insira a URL do vídeo.")
+            QMessageBox.warning(self, "Aviso", "Por favor, insira a URL.")
             return
         if not folder:
             QMessageBox.warning(self, "Aviso", "Por favor, escolha a pasta de destino.")
             return
             
         self.btn_download.setEnabled(False)
-        self.btn_download.setText("Baixando e Processando...")
+        self.btn_download.setText("Processando... (Pode demorar se for playlist)")
         self.progress_bar.setValue(0)
         
-        # Passamos a nova variável para o trabalhador
-        self.worker = WorkerProcess(url, folder, format_choice, embed_metadata)
+        self.worker = WorkerProcess(url, folder, format_choice, embed_metadata, is_playlist)
         self.worker.progress.connect(self.update_progress)
         self.worker.finished.connect(self.download_finished)
         self.worker.error.connect(self.download_error)
         self.worker.start()
         
     def update_progress(self, percent):
+        # Nota: em playlists, a barra vai de 0 a 100 para CADA música baixada.
         self.progress_bar.setValue(percent)
         
     def download_finished(self, msg):
@@ -305,7 +296,7 @@ class AppDownloadEducacional(QWidget):
         
     def download_error(self, err_msg):
         self.reset_ui()
-        QMessageBox.critical(self, "Erro", f"Ops, ocorreu um erro ao baixar:\n{err_msg}")
+        QMessageBox.critical(self, "Erro", f"Ops, ocorreu um erro:\n{err_msg}")
         
     def reset_ui(self):
         self.btn_download.setEnabled(True)
