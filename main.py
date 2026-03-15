@@ -1,3 +1,10 @@
+"""
+NanoDrop - Mídia Perfeita para o seu iPod
+Autor: MattCarneiiroo
+Descrição: Aplicativo PyQt6 para baixar vídeos e músicas do YouTube/YT Music
+já com metadados embutidos e conversão otimizada para iPods antigos.
+"""
+
 import sys
 import os
 import yt_dlp
@@ -33,7 +40,6 @@ class WorkerProcess(QThread):
 
     def run(self):
         try:
-            # Inteligência de Playlist
             if self.is_playlist:
                 out_path = os.path.join(self.folder, '%(playlist_index)02d - %(title)s.%(ext)s')
                 noplaylist_flag = False
@@ -51,44 +57,26 @@ class WorkerProcess(QThread):
                 'postprocessors': [] 
             }
 
-            # 1. Configuração de Vídeo ou Áudio
             if self.format_choice == "windows":
                 opts['format'] = 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'
                 opts['merge_output_format'] = 'mp4'
-                
             elif self.format_choice == "retro":
-                # O formato "18" do YouTube é magicamente o padrão exato do iPod (H.264 Baseline, AAC).
-                # Se não existir, ele pega o melhor MP4 até 480p que o iTunes aceite.
                 opts['format'] = '18/bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]'
                 opts['merge_output_format'] = 'mp4'
-                
             elif self.format_choice == "max":
                 opts['format'] = 'bestvideo+bestaudio/best'
                 opts['merge_output_format'] = 'mkv'
-                
             elif self.format_choice == "audio_flac":
                 opts['format'] = 'bestaudio/best'
-                opts['postprocessors'].append({
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'flac',
-                })
-                
+                opts['postprocessors'].append({'key': 'FFmpegExtractAudio', 'preferredcodec': 'flac'})
             elif self.format_choice == "audio_mp3":
                 opts['format'] = 'bestaudio/best'
-                opts['postprocessors'].append({
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '320',
-                })
+                opts['postprocessors'].append({'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'})
 
-            # 2. Configuração de Metadados (A Mágica da Capinha)
             if self.embed_metadata:
                 opts['writethumbnail'] = True
                 opts['postprocessors'].append({'key': 'FFmpegMetadata'})
-                opts['postprocessors'].append({
-                    'key': 'EmbedThumbnail',
-                    'already_have_thumbnail': False,
-                })
+                opts['postprocessors'].append({'key': 'EmbedThumbnail', 'already_have_thumbnail': False})
 
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([self.url])
@@ -106,19 +94,18 @@ class AppDownloadEducacional(QWidget):
         self.apply_theme()
         
     def initUI(self):
-        self.setWindowTitle("Baixador Mídia (iPod Edition)")
+        self.setWindowTitle("NanoDrop")
         self.setFixedSize(520, 560)
         
         layout = QVBoxLayout()
         layout.setSpacing(15)
         layout.setContentsMargins(30, 30, 30, 30)
         
-        # --- Top Bar ---
         top_layout = QHBoxLayout()
-        self.label_title = QLabel("Baixador de Mídia")
+        self.label_title = QLabel("NanoDrop")
         self.label_title.setStyleSheet("font-size: 22px; font-weight: 800; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;")
         
-        self.btn_theme = QPushButton("☀️ Mudar Tema")
+        self.btn_theme = QPushButton("☀️ Tema")
         self.btn_theme.setObjectName("btn_theme")
         self.btn_theme.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_theme.clicked.connect(self.toggle_theme)
@@ -128,8 +115,7 @@ class AppDownloadEducacional(QWidget):
         top_layout.addWidget(self.btn_theme)
         layout.addLayout(top_layout)
         
-        # --- Entradas ---
-        self.label_url = QLabel("URL do Vídeo ou Música (YouTube / YT Music):")
+        self.label_url = QLabel("URL (YouTube / YT Music):")
         self.label_url.setStyleSheet("font-weight: 600; font-size: 13px;")
         
         self.input_url = QLineEdit()
@@ -159,9 +145,8 @@ class AppDownloadEducacional(QWidget):
         layout.addWidget(self.label_folder)
         layout.addLayout(folder_layout)
         
-        # --- Seleção Vídeo/Áudio ---
         tipo_layout = QHBoxLayout()
-        self.radio_video = QRadioButton("Vídeo (MP4/MKV)")
+        self.radio_video = QRadioButton("Vídeo (MP4)")
         self.radio_audio = QRadioButton("Somente Áudio")
         self.radio_audio.setChecked(True) 
         
@@ -176,31 +161,27 @@ class AppDownloadEducacional(QWidget):
         tipo_layout.addWidget(self.radio_audio)
         layout.addLayout(tipo_layout)
         
-        # --- Qualidade ---
         self.combo_format = QComboBox()
         self.combo_format.setMinimumHeight(40)
         self.atualizar_opcoes_formato()
         layout.addWidget(self.combo_format)
         
-        # --- Checkboxes ---
         self.check_metadata = QCheckBox("Embutir Capa e Metadados (Ideal para iPod)")
         self.check_metadata.setChecked(True) 
         self.check_metadata.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.check_metadata)
 
-        self.check_playlist = QCheckBox("Baixar Álbum/Playlist inteira (Numera as faixas)")
+        self.check_playlist = QCheckBox("Baixar Álbum/Playlist inteira")
         self.check_playlist.setChecked(False) 
         self.check_playlist.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.check_playlist)
         
-        # --- Progresso ---
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setMinimumHeight(20)
         layout.addWidget(self.progress_bar)
         
-        # --- Botão Baixar ---
         self.btn_download = QPushButton("Iniciar Download")
         self.btn_download.setObjectName("btn_download")
         self.btn_download.setMinimumHeight(50)
@@ -216,7 +197,7 @@ class AppDownloadEducacional(QWidget):
 
     def apply_theme(self):
         if self.is_dark_mode:
-            self.btn_theme.setText("☀️ Modo Claro")
+            self.btn_theme.setText("☀️ Claro")
             style = """
                 QWidget { background-color: #1C1C1E; color: #F2F2F7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
                 QLineEdit, QComboBox { background-color: #2C2C2E; border: 1px solid #3A3A3C; border-radius: 8px; padding: 8px 12px; color: #FFFFFF; font-size: 13px; }
@@ -235,7 +216,7 @@ class AppDownloadEducacional(QWidget):
                 QRadioButton, QCheckBox { font-weight: 600; font-size: 13px; }
             """
         else:
-            self.btn_theme.setText("🌙 Modo Escuro")
+            self.btn_theme.setText("🌙 Escuro")
             style = """
                 QWidget { background-color: #F2F2F7; color: #1C1C1E; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
                 QLineEdit, QComboBox { background-color: #FFFFFF; border: 1px solid #D1D1D6; border-radius: 8px; padding: 8px 12px; color: #000000; font-size: 13px; }
@@ -258,11 +239,11 @@ class AppDownloadEducacional(QWidget):
     def atualizar_opcoes_formato(self):
         self.combo_format.clear()
         if self.radio_video.isChecked():
-            self.combo_format.addItem("Compatível com Computadores (MP4 / H.264)", "windows")
-            self.combo_format.addItem("Vídeo Retrô (iPod Nano / Classic - MP4 480p)", "retro") # <--- A nova opção de vídeo!
+            self.combo_format.addItem("Compatível com PC/Apple (MP4 / H.264)", "windows")
+            self.combo_format.addItem("Vídeo Retrô (iPod Nano / Classic - MP4 480p)", "retro")
             self.combo_format.addItem("Altíssima Qualidade (MKV)", "max")
         else:
-            self.combo_format.addItem("Áudio Excelente (MP3 - 320kbps - Perfeito p/ iPod)", "audio_mp3")
+            self.combo_format.addItem("Áudio Excelente (MP3 320kbps - Perfeito p/ iPod)", "audio_mp3")
             self.combo_format.addItem("Áudio Primoroso (FLAC - Formato sem perdas)", "audio_flac")
             
     def browse_folder(self):
@@ -277,15 +258,12 @@ class AppDownloadEducacional(QWidget):
         embed_metadata = self.check_metadata.isChecked()
         is_playlist = self.check_playlist.isChecked()
         
-        if not url:
-            QMessageBox.warning(self, "Aviso", "Por favor, insira a URL.")
-            return
-        if not folder:
-            QMessageBox.warning(self, "Aviso", "Por favor, escolha a pasta de destino.")
+        if not url or not folder:
+            QMessageBox.warning(self, "Aviso", "Preencha a URL e a pasta de destino.")
             return
             
         self.btn_download.setEnabled(False)
-        self.btn_download.setText("Processando... (Pode demorar se for playlist)")
+        self.btn_download.setText("Processando...")
         self.progress_bar.setValue(0)
         
         self.worker = WorkerProcess(url, folder, format_choice, embed_metadata, is_playlist)
@@ -303,7 +281,7 @@ class AppDownloadEducacional(QWidget):
         
     def download_error(self, err_msg):
         self.reset_ui()
-        QMessageBox.critical(self, "Erro", f"Ops, ocorreu um erro:\n{err_msg}")
+        QMessageBox.critical(self, "Erro", f"Ocorreu um erro:\n{err_msg}")
         
     def reset_ui(self):
         self.btn_download.setEnabled(True)

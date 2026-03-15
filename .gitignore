@@ -1,1 +1,17 @@
+#Test Archive
 Test/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ambientes Virtuais
+venv/
+env/
+.env
+
+# Executáveis e Builds (Caso você compile o app depois)
+build/
+dist/
+*.spec
