@@ -58,5 +58,5 @@ Distributed under the MIT License. See `LICENSE` for more information (if applic
 
 ---
 <div align="center">
-  <sub>Built with python and passion for the NanoDrop project.</sub>
+  <sub>Built with python and passion for the iPod community.</sub>
 </div>
