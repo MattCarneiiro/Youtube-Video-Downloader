@@ -19,7 +19,7 @@ class WorkerProcess(QThread):
         self.folder = folder
         self.format_choice = format_choice
         self.embed_metadata = embed_metadata
-        self.is_playlist = is_playlist # Nova variável para saber se é playlist
+        self.is_playlist = is_playlist
 
     def progress_hook(self, d):
         if d['status'] == 'downloading':
@@ -33,13 +33,11 @@ class WorkerProcess(QThread):
 
     def run(self):
         try:
-            # Inteligência de Playlist para organizar o iPod
+            # Inteligência de Playlist
             if self.is_playlist:
-                # Se for álbum/playlist, coloca o número da faixa na frente: "01 - Nome.mp3"
                 out_path = os.path.join(self.folder, '%(playlist_index)02d - %(title)s.%(ext)s')
                 noplaylist_flag = False
             else:
-                # Se for música única, só o nome. Ignora playlists ocultas no link do YT Music.
                 out_path = os.path.join(self.folder, '%(title)s.%(ext)s')
                 noplaylist_flag = True
             
@@ -49,7 +47,7 @@ class WorkerProcess(QThread):
                 'progress_hooks': [self.progress_hook],
                 'quiet': True,
                 'noprogress': True,
-                'noplaylist': noplaylist_flag, # A trava de segurança!
+                'noplaylist': noplaylist_flag,
                 'postprocessors': [] 
             }
 
@@ -57,15 +55,24 @@ class WorkerProcess(QThread):
             if self.format_choice == "windows":
                 opts['format'] = 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'
                 opts['merge_output_format'] = 'mp4'
+                
+            elif self.format_choice == "retro":
+                # O formato "18" do YouTube é magicamente o padrão exato do iPod (H.264 Baseline, AAC).
+                # Se não existir, ele pega o melhor MP4 até 480p que o iTunes aceite.
+                opts['format'] = '18/bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]'
+                opts['merge_output_format'] = 'mp4'
+                
             elif self.format_choice == "max":
                 opts['format'] = 'bestvideo+bestaudio/best'
                 opts['merge_output_format'] = 'mkv'
+                
             elif self.format_choice == "audio_flac":
                 opts['format'] = 'bestaudio/best'
                 opts['postprocessors'].append({
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'flac',
                 })
+                
             elif self.format_choice == "audio_mp3":
                 opts['format'] = 'bestaudio/best'
                 opts['postprocessors'].append({
@@ -74,7 +81,7 @@ class WorkerProcess(QThread):
                     'preferredquality': '320',
                 })
 
-            # 2. Configuração de Metadados
+            # 2. Configuração de Metadados (A Mágica da Capinha)
             if self.embed_metadata:
                 opts['writethumbnail'] = True
                 opts['postprocessors'].append({'key': 'FFmpegMetadata'})
@@ -87,7 +94,7 @@ class WorkerProcess(QThread):
                 ydl.download([self.url])
                 
             self.progress.emit(100)
-            self.finished.emit("Processo concluído! Os arquivos estão na pasta escolhida.")
+            self.finished.emit("Processo concluído! Pode arrastar os arquivos direto para o iTunes.")
         except Exception as e:
             self.error.emit(str(e))
 
@@ -100,7 +107,7 @@ class AppDownloadEducacional(QWidget):
         
     def initUI(self):
         self.setWindowTitle("Baixador Mídia (iPod Edition)")
-        self.setFixedSize(520, 560) # Aumentei um pouco mais para a nova opção
+        self.setFixedSize(520, 560)
         
         layout = QVBoxLayout()
         layout.setSpacing(15)
@@ -156,7 +163,7 @@ class AppDownloadEducacional(QWidget):
         tipo_layout = QHBoxLayout()
         self.radio_video = QRadioButton("Vídeo (MP4/MKV)")
         self.radio_audio = QRadioButton("Somente Áudio")
-        self.radio_audio.setChecked(True) # Mudei o padrão para áudio já que o foco é o iPod!
+        self.radio_audio.setChecked(True) 
         
         self.grupo_tipo = QButtonGroup()
         self.grupo_tipo.addButton(self.radio_video)
@@ -175,14 +182,14 @@ class AppDownloadEducacional(QWidget):
         self.atualizar_opcoes_formato()
         layout.addWidget(self.combo_format)
         
-        # --- NOVIDADES: Checkboxes Extras ---
+        # --- Checkboxes ---
         self.check_metadata = QCheckBox("Embutir Capa e Metadados (Ideal para iPod)")
         self.check_metadata.setChecked(True) 
         self.check_metadata.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.check_metadata)
 
         self.check_playlist = QCheckBox("Baixar Álbum/Playlist inteira (Numera as faixas)")
-        self.check_playlist.setChecked(False) # Padrão desligado para evitar baixar 100 músicas sem querer
+        self.check_playlist.setChecked(False) 
         self.check_playlist.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.check_playlist)
         
@@ -251,7 +258,8 @@ class AppDownloadEducacional(QWidget):
     def atualizar_opcoes_formato(self):
         self.combo_format.clear()
         if self.radio_video.isChecked():
-            self.combo_format.addItem("Compatível com Windows/Apple (MP4 / H.264)", "windows")
+            self.combo_format.addItem("Compatível com Computadores (MP4 / H.264)", "windows")
+            self.combo_format.addItem("Vídeo Retrô (iPod Nano / Classic - MP4 480p)", "retro") # <--- A nova opção de vídeo!
             self.combo_format.addItem("Altíssima Qualidade (MKV)", "max")
         else:
             self.combo_format.addItem("Áudio Excelente (MP3 - 320kbps - Perfeito p/ iPod)", "audio_mp3")
@@ -287,7 +295,6 @@ class AppDownloadEducacional(QWidget):
         self.worker.start()
         
     def update_progress(self, percent):
-        # Nota: em playlists, a barra vai de 0 a 100 para CADA música baixada.
         self.progress_bar.setValue(percent)
         
     def download_finished(self, msg):
