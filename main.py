@@ -57,6 +57,9 @@ class WorkerProcess(QThread):
                 'postprocessors': [] 
             }
 
+            # Identificar se a escolha do usuário é vídeo ou áudio
+            is_video_format = self.format_choice in ["windows", "retro", "max"]
+
             if self.format_choice == "windows":
                 opts['format'] = 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'
                 opts['merge_output_format'] = 'mp4'
@@ -73,16 +76,25 @@ class WorkerProcess(QThread):
                 opts['format'] = 'bestaudio/best'
                 opts['postprocessors'].append({'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'})
 
+            # --- LÓGICA CONDICIONAL DE METADADOS ---
             if self.embed_metadata:
-                opts['writethumbnail'] = True
-                opts['postprocessors'].append({'key': 'FFmpegMetadata'})
-                opts['postprocessors'].append({'key': 'EmbedThumbnail', 'already_have_thumbnail': False})
+                if is_video_format:
+                    # CASO VÍDEO: Baixa a capa separada e embuti apenas os metadados de texto
+                    opts['writethumbnail'] = True
+                    opts['postprocessors'].append({'key': 'FFmpegMetadata'})
+                    # Note que NÃO adicionamos o 'EmbedThumbnail' aqui
+                else:
+                    # CASO ÁUDIO: Mantém o comportamento original (Embuti capa + metadados)
+                    opts['writethumbnail'] = True
+                    opts['postprocessors'].append({'key': 'FFmpegMetadata'})
+                    opts['postprocessors'].append({'key': 'EmbedThumbnail', 'already_have_thumbnail': False})
+            # ---------------------------------------
 
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([self.url])
                 
             self.progress.emit(100)
-            self.finished.emit("Processo concluído! Pode arrastar os arquivos direto para o iTunes.")
+            self.finished.emit("Processo concluído! Arquivos prontos para o iTunes.")
         except Exception as e:
             self.error.emit(str(e))
 
