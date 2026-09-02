@@ -45,6 +45,31 @@ def ensure_ffmpeg_on_path():
 
     os.environ["PATH"] = cache_dir + os.pathsep + os.environ.get("PATH", "")
     return src
+
+
+def detect_js_runtime():
+    """O YouTube passou a exigir um runtime JavaScript para extrair a maioria
+    dos vídeos (desafios anti-bot / streaming SABR). O yt-dlp usa o Deno
+    automaticamente; para Bun/Node é preciso indicá-lo. Retorna um dict no
+    formato aceito por 'js_runtimes' do yt-dlp, ou None se nada for encontrado."""
+    if shutil.which("deno"):
+        return {"deno": {}}
+    if shutil.which("bun"):
+        return {"bun": {}}
+    node = shutil.which("node")
+    if node:
+        try:
+            import subprocess
+            out = subprocess.run([node, "--version"], capture_output=True,
+                                 text=True, timeout=5).stdout.strip()
+            major = int(out.lstrip("v").split(".")[0])
+            if major >= 22:
+                return {"node": {}}
+        except Exception:
+            pass
+    return None
+
+
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QProgressBar,
                              QFileDialog, QMessageBox, QComboBox, QRadioButton, 
@@ -115,8 +140,16 @@ class WorkerProcess(QThread):
                 'quiet': True,
                 'noprogress': True,
                 'noplaylist': noplaylist_flag,
-                'postprocessors': [] 
+                'postprocessors': []
             }
+
+            # O YouTube exige um runtime JS para extrair a maioria dos vídeos.
+            # Se houver Deno/Bun/Node disponível, habilita-o + o solucionador
+            # de desafios do yt-dlp (baixado do GitHub e cacheado).
+            js_runtime = detect_js_runtime()
+            if js_runtime:
+                opts['js_runtimes'] = js_runtime
+                opts['remote_components'] = ['ejs:github']
 
             # Identificar se a escolha do usuário é vídeo ou áudio
             is_video_format = self.format_choice in ["windows", "retro", "max"]
