@@ -9,24 +9,50 @@ import sys
 import os
 import yt_dlp
 import imageio_ffmpeg
+from yt_dlp.utils import download_range_func
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QProgressBar,
                              QFileDialog, QMessageBox, QComboBox, QRadioButton, 
                              QButtonGroup, QSpacerItem, QSizePolicy, QCheckBox)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 
+
+def parse_timestamp(text):
+    """Converte 'MM:SS', 'HH:MM:SS' ou segundos puros em float de segundos.
+    Retorna None se o texto for vazio ou inválido."""
+    text = (text or "").strip().replace(',', '.')
+    if not text:
+        return None
+    try:
+        parts = [float(p) for p in text.split(':')]
+    except ValueError:
+        return None
+    if any(p < 0 for p in parts):
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    elif len(parts) == 2:
+        return parts[0] * 60 + parts[1]
+    elif len(parts) == 3:
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    return None
+
+
 class WorkerProcess(QThread):
     progress = pyqtSignal(int)
     finished = pyqtSignal(str) 
     error = pyqtSignal(str)
     
-    def __init__(self, url, folder, format_choice, embed_metadata, is_playlist):
+    def __init__(self, url, folder, format_choice, embed_metadata, is_playlist,
+                 section_start=None, section_end=None):
         super().__init__()
         self.url = url
         self.folder = folder
         self.format_choice = format_choice
         self.embed_metadata = embed_metadata
         self.is_playlist = is_playlist
+        self.section_start = section_start
+        self.section_end = section_end
 
     def progress_hook(self, d):
         if d['status'] == 'downloading':
@@ -90,6 +116,14 @@ class WorkerProcess(QThread):
                     opts['postprocessors'].append({'key': 'EmbedThumbnail', 'already_have_thumbnail': False})
             # ---------------------------------------
 
+            # --- TRECHO ESPECÍFICO (corte por tempo) ---
+            if self.section_start is not None and self.section_end is not None:
+                opts['download_ranges'] = download_range_func(
+                    None, [(self.section_start, self.section_end)]
+                )
+                opts['force_keyframes_at_cuts'] = True
+            # ------------------------------------------
+
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([self.url])
                 
@@ -107,7 +141,7 @@ class AppDownloadEducacional(QWidget):
         
     def initUI(self):
         self.setWindowTitle("NanoDrop")
-        self.setFixedSize(520, 560)
+        self.setFixedSize(520, 640)
         
         layout = QVBoxLayout()
         layout.setSpacing(15)
@@ -184,10 +218,38 @@ class AppDownloadEducacional(QWidget):
         layout.addWidget(self.check_metadata)
 
         self.check_playlist = QCheckBox("Baixar Álbum/Playlist inteira")
-        self.check_playlist.setChecked(False) 
+        self.check_playlist.setChecked(False)
         self.check_playlist.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.check_playlist)
-        
+
+        self.check_trim = QCheckBox("Baixar apenas um trecho (corte por tempo)")
+        self.check_trim.setChecked(False)
+        self.check_trim.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.check_trim.toggled.connect(self.toggle_trim_fields)
+        layout.addWidget(self.check_trim)
+
+        trim_layout = QHBoxLayout()
+        self.label_start = QLabel("Início:")
+        self.label_start.setStyleSheet("font-weight: 600; font-size: 13px;")
+        self.input_start = QLineEdit()
+        self.input_start.setPlaceholderText("1:25")
+        self.input_start.setMinimumHeight(36)
+        self.label_end = QLabel("Fim:")
+        self.label_end.setStyleSheet("font-weight: 600; font-size: 13px;")
+        self.input_end = QLineEdit()
+        self.input_end.setPlaceholderText("3:00")
+        self.input_end.setMinimumHeight(36)
+        trim_layout.addWidget(self.label_start)
+        trim_layout.addWidget(self.input_start)
+        trim_layout.addWidget(self.label_end)
+        trim_layout.addWidget(self.input_end)
+        layout.addLayout(trim_layout)
+
+        # Trecho e playlist são mutuamente exclusivos
+        self.check_trim.toggled.connect(self.check_playlist.setDisabled)
+        self.check_playlist.toggled.connect(self.check_trim.setDisabled)
+        self.toggle_trim_fields()
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
@@ -206,6 +268,13 @@ class AppDownloadEducacional(QWidget):
     def toggle_theme(self):
         self.is_dark_mode = not self.is_dark_mode
         self.apply_theme()
+
+    def toggle_trim_fields(self):
+        enabled = self.check_trim.isChecked()
+        self.label_start.setEnabled(enabled)
+        self.input_start.setEnabled(enabled)
+        self.label_end.setEnabled(enabled)
+        self.input_end.setEnabled(enabled)
 
     def apply_theme(self):
         if self.is_dark_mode:
@@ -273,12 +342,26 @@ class AppDownloadEducacional(QWidget):
         if not url or not folder:
             QMessageBox.warning(self, "Aviso", "Preencha a URL e a pasta de destino.")
             return
-            
+
+        section_start = section_end = None
+        if self.check_trim.isChecked():
+            section_start = parse_timestamp(self.input_start.text())
+            section_end = parse_timestamp(self.input_end.text())
+            if section_start is None or section_end is None:
+                QMessageBox.warning(self, "Aviso",
+                    "Tempos inválidos. Use o formato MM:SS ou HH:MM:SS (ex.: 1:25).")
+                return
+            if section_end <= section_start:
+                QMessageBox.warning(self, "Aviso",
+                    "O tempo final deve ser maior que o tempo inicial.")
+                return
+
         self.btn_download.setEnabled(False)
         self.btn_download.setText("Processando...")
         self.progress_bar.setValue(0)
-        
-        self.worker = WorkerProcess(url, folder, format_choice, embed_metadata, is_playlist)
+
+        self.worker = WorkerProcess(url, folder, format_choice, embed_metadata,
+                                    is_playlist, section_start, section_end)
         self.worker.progress.connect(self.update_progress)
         self.worker.finished.connect(self.download_finished)
         self.worker.error.connect(self.download_error)
