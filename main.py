@@ -7,9 +7,44 @@ já com metadados embutidos e conversão otimizada para iPods antigos.
 
 import sys
 import os
+import shutil
 import yt_dlp
 import imageio_ffmpeg
 from yt_dlp.utils import download_range_func
+
+
+def ensure_ffmpeg_on_path():
+    """Garante que exista um 'ffmpeg' localizável pelo nome no PATH.
+
+    O download de um trecho (download parcial) do yt-dlp usa o FFmpegFD, que
+    procura o executável 'ffmpeg' no PATH e ignora a opção 'ffmpeg_location'.
+    O binário empacotado pelo imageio-ffmpeg tem nome não-padrão
+    (ex.: ffmpeg-win-x86_64-v7.1.exe), então copiamos uma cópia chamada
+    'ffmpeg(.exe)' para uma pasta de cache e a colocamos no início do PATH.
+    Retorna o caminho do ffmpeg empacotado (para usar em 'ffmpeg_location')."""
+    try:
+        src = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+    if shutil.which("ffmpeg"):
+        return src  # já há um ffmpeg utilizável no PATH
+
+    exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    cache_dir = os.path.join(base, "NanoDrop", "bin")
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        dst = os.path.join(cache_dir, exe_name)
+        if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(src):
+            shutil.copy2(src, dst)
+        if not os.access(dst, os.X_OK):
+            os.chmod(dst, 0o755)
+    except Exception:
+        return src  # sem cache: pelo menos 'ffmpeg_location' ainda funciona
+
+    os.environ["PATH"] = cache_dir + os.pathsep + os.environ.get("PATH", "")
+    return src
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QProgressBar,
                              QFileDialog, QMessageBox, QComboBox, QRadioButton, 
@@ -130,7 +165,29 @@ class WorkerProcess(QThread):
             self.progress.emit(100)
             self.finished.emit("Processo concluído! Arquivos prontos para o iTunes.")
         except Exception as e:
-            self.error.emit(str(e))
+            self.error.emit(self._friendly_error(str(e)))
+
+    @staticmethod
+    def _friendly_error(raw):
+        low = raw.lower()
+        if "ffmpeg is not installed" in low or "ffmpeg not found" in low:
+            return ("O FFmpeg não foi encontrado para cortar o trecho. "
+                    "Reabra o NanoDrop (ele configura o FFmpeg automaticamente) "
+                    "ou instale o FFmpeg e adicione ao PATH.\n\nDetalhe: " + raw)
+        if "this video is not available" in low or "sabr" in low or "missing a url" in low:
+            return ("O YouTube bloqueou a extração deste vídeo (SABR / verificação anti-bot). "
+                    "Possíveis causas: vídeo privado/removido, restrito por região/idade, "
+                    "ou é necessário atualizar o yt-dlp:\n"
+                    "  pip install -U yt-dlp\n\n"
+                    "Vídeos assim às vezes exigem um runtime JavaScript (Deno) instalado.\n\n"
+                    "Detalhe: " + raw)
+        if "requested format is not available" in low:
+            return ("O formato escolhido não está disponível para este vídeo. "
+                    "Tente outra opção de qualidade/formato.\n\nDetalhe: " + raw)
+        if "private video" in low or "sign in" in low or "login required" in low:
+            return ("Vídeo privado ou que exige login. O NanoDrop não consegue baixá-lo.\n\n"
+                    "Detalhe: " + raw)
+        return raw
 
 class AppDownloadEducacional(QWidget):
     def __init__(self):
@@ -384,6 +441,7 @@ class AppDownloadEducacional(QWidget):
         self.progress_bar.setValue(0)
 
 if __name__ == "__main__":
+    ensure_ffmpeg_on_path()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     window = AppDownloadEducacional()
